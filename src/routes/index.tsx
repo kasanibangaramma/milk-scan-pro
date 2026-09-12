@@ -346,7 +346,7 @@ function Home() {
         {stage === "result" && (
           <section className="space-y-4">
             <h2 className="text-center font-display text-2xl font-bold text-foreground">
-              Milk Calculation Result
+              Milk &amp; Amount Results
             </h2>
             <div className="space-y-3">
               <ResultCard label="Morning Milk Total" value={fmt(totals.morningMilkTotal)} />

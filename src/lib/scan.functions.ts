@@ -45,8 +45,6 @@ const CellSchema = z.object({
 const ModelSchema = z.object({
   table_detected: z.boolean(),
   column_count: z.number().nullable().optional(),
-  morning_column_index: z.number().nullable().optional(),
-  evening_column_index: z.number().nullable().optional(),
   image_quality: z.enum(["good", "poor"]).nullable().optional(),
   rows: z
     .array(
