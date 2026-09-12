@@ -154,8 +154,10 @@ function Home() {
   }
 
   const totals = calculateMilkAndAmountTotals(rows);
-  const fields: EditableField[] = ["morningMilk", "eveningMilk", "morningAmount", "eveningAmount"];
-  const pending = rows.filter((row) => fields.some((field) => row[`${field}Flag`] || parseNumericCell(row[field]) === null));
+  const amountFields: EditableField[] = ["morningAmount", "eveningAmount"];
+  const pending = rows.filter((row) =>
+    amountFields.some((field) => row[`${field}Flag`] || parseNumericCell(row[field]) === null),
+  );
 
   function updateCell(index: number, field: EditableField, value: string) {
     setRows((previous) =>
@@ -265,9 +267,9 @@ function Home() {
               <p className="font-semibold text-foreground">How it reads your sheet</p>
               <ul className="mt-2 space-y-1">
                 <li>• Scan one page only — days 1–15 or days 16–30/31.</li>
-                 <li>• Milk is read from columns 2 and 5.</li>
-                 <li>• Amount is read from columns 4 and 7.</li>
-                <li>• You check every value before the total is calculated.</li>
+                <li>• Totals use only the Amount columns (4 and 7).</li>
+                <li>• Milk and Fat are never shown in the result.</li>
+                <li>• You check every amount before the total is calculated.</li>
                 <li>• Nothing is saved — the scan is cleared when you finish.</li>
               </ul>
             </div>
@@ -346,15 +348,24 @@ function Home() {
         {stage === "result" && (
           <section className="space-y-4">
             <h2 className="text-center font-display text-2xl font-bold text-foreground">
-              Milk &amp; Amount Results
+              Milk Collection Amounts
             </h2>
+            <div className="overflow-hidden rounded-3xl border border-border bg-card">
+              <div className="grid grid-cols-[minmax(0,3rem)_minmax(0,1fr)_minmax(0,1fr)] gap-2 border-b border-border bg-muted/70 px-3 py-3 text-sm font-bold uppercase text-muted-foreground">
+                <span>Day</span><span>Morning Amount</span><span>Evening Amount</span>
+              </div>
+              {rows.map((row) => (
+                <div key={row.day} className="grid grid-cols-[minmax(0,3rem)_minmax(0,1fr)_minmax(0,1fr)] gap-2 border-b border-border/60 px-3 py-3 text-lg font-semibold tabular-nums text-foreground last:border-0">
+                  <span>{row.day}</span>
+                  <span>₹{fmt(parseNumericCell(row.morningAmount) ?? 0)}</span>
+                  <span>₹{fmt(parseNumericCell(row.eveningAmount) ?? 0)}</span>
+                </div>
+              ))}
+            </div>
             <div className="space-y-3">
-              <ResultCard label="Morning Milk Total" value={fmt(totals.morningMilkTotal)} />
-              <ResultCard label="Evening Milk Total" value={fmt(totals.eveningMilkTotal)} />
-              <div className="my-2 border-t border-border" />
-              <ResultCard label="Morning Amount Total" value={fmt(totals.morningAmountTotal)} />
-              <ResultCard label="Evening Amount Total" value={fmt(totals.eveningAmountTotal)} />
-              <ResultCard label="Total Amount" value={fmt(totals.totalAmount)} highlight />
+              <ResultCard label="Morning Amount Total" value={`₹${fmt(totals.morningAmountTotal)}`} />
+              <ResultCard label="Evening Amount Total" value={`₹${fmt(totals.eveningAmountTotal)}`} />
+              <ResultCard label="FINAL TOTAL AMOUNT" value={`₹${fmt(totals.totalAmount)}`} highlight />
             </div>
             <p className="text-center text-base text-muted-foreground">
               Rows detected: <span className="font-bold text-foreground">{rows.length}</span>
