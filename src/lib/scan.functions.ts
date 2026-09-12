@@ -95,7 +95,7 @@ STEP 4 — Output strict JSON only, no markdown:
 }
 
 Rules:
-- Include one entry per visible day row only (e.g. days 1-15, or 16-30/31). Never invent rows.
+- Include one entry for EVERY visible day row, from the first day on the page to the very last. On a second page this can be days 16 through 31. NEVER stop at day 28, 29, or 30 — if days 29, 30, or 31 are written on the page, they MUST be included. Never invent rows that are not on the page.
 - "text" is exactly what is written in that cell ("" if blank). "value" is the numeric value with correct decimals, or null if blank/unreadable.
 - confidence is 0..1 and must be honest: use below 0.75 whenever the digit shape is ambiguous (0/8, 1/7, 5/6), the decimal point is unclear, digits are cut off, or the cell is blurry/blank.
 - Never guess an uncertain value. If confidence is below 0.75, return value null even if text contains a possible reading.
@@ -127,6 +127,7 @@ export const scanMilkPage = createServerFn({ method: "POST" })
             },
           ],
           response_format: { type: "json_object" },
+          max_tokens: 8192,
         }),
       });
     } catch {
