@@ -127,6 +127,7 @@ export const scanMilkPage = createServerFn({ method: "POST" })
             },
           ],
           response_format: { type: "json_object" },
+          max_tokens: 8192,
         }),
       });
     } catch {
