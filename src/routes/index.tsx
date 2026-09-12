@@ -2,6 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useRef, useState } from "react";
 import { useServerFn } from "@tanstack/react-start";
 import { scanMilkPage, type ScanRow } from "@/lib/scan.functions";
+import { calculateMilkAndAmountTotals, parseNumericCell } from "@/lib/scan-calculations";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -28,11 +29,17 @@ type Stage = "home" | "processing" | "verify" | "result";
 
 type EditableRow = {
   day: number;
-  morning: string;
-  evening: string;
-  morningFlag: boolean;
-  eveningFlag: boolean;
+  morningMilk: string;
+  eveningMilk: string;
+  morningAmount: string;
+  eveningAmount: string;
+  morningMilkFlag: boolean;
+  eveningMilkFlag: boolean;
+  morningAmountFlag: boolean;
+  eveningAmountFlag: boolean;
 };
+
+type EditableField = "morningMilk" | "eveningMilk" | "morningAmount" | "eveningAmount";
 
 const STEPS = [
   "Detecting table…",
@@ -46,18 +53,15 @@ const STEPS = [
 function toEditable(rows: ScanRow[]): EditableRow[] {
   return rows.map((r) => ({
     day: r.day,
-    morning: r.morning.value === null ? "" : String(r.morning.value),
-    evening: r.evening.value === null ? "" : String(r.evening.value),
-    morningFlag: r.morning.needsVerification,
-    eveningFlag: r.evening.needsVerification,
+    morningMilk: r.morningMilk.value === null ? "" : String(r.morningMilk.value),
+    eveningMilk: r.eveningMilk.value === null ? "" : String(r.eveningMilk.value),
+    morningAmount: r.morningAmount.value === null ? "" : String(r.morningAmount.value),
+    eveningAmount: r.eveningAmount.value === null ? "" : String(r.eveningAmount.value),
+    morningMilkFlag: r.morningMilk.needsVerification,
+    eveningMilkFlag: r.eveningMilk.needsVerification,
+    morningAmountFlag: r.morningAmount.needsVerification,
+    eveningAmountFlag: r.eveningAmount.needsVerification,
   }));
-}
-
-function parseCell(v: string): number | null {
-  const t = v.trim();
-  if (t === "") return null;
-  const n = Number(t.replace(",", "."));
-  return Number.isFinite(n) ? n : null;
 }
 
 function fmt(n: number): string {
@@ -149,11 +153,62 @@ function Home() {
     }
   }
 
-  const morningTotal = rows.reduce((sum, r) => sum + (parseCell(r.morning) ?? 0), 0);
-  const eveningTotal = rows.reduce((sum, r) => sum + (parseCell(r.evening) ?? 0), 0);
-  const pending = rows.filter(
-    (r) => (r.morningFlag && r.morning.trim() === "") || (r.eveningFlag && r.evening.trim() === ""),
-  );
+  const totals = calculateMilkAndAmountTotals(rows);
+  const fields: EditableField[] = ["morningMilk", "eveningMilk", "morningAmount", "eveningAmount"];
+  const pending = rows.filter((row) => fields.some((field) => row[`${field}Flag`] || parseNumericCell(row[field]) === null));
+
+  function updateCell(index: number, field: EditableField, value: string) {
+    setRows((previous) =>
+      previous.map((row, rowIndex) =>
+        rowIndex === index
+          ? { ...row, [field]: value, [`${field}Flag`]: parseNumericCell(value) === null }
+          : row,
+      ),
+    );
+  }
+
+  function VerificationTable({
+    title,
+    morningField,
+    eveningField,
+  }: {
+    title: string;
+    morningField: EditableField;
+    eveningField: EditableField;
+  }) {
+    return (
+      <div className="overflow-hidden rounded-3xl border border-border bg-card">
+        <h3 className="border-b border-border bg-secondary px-3 py-3 text-center font-bold text-secondary-foreground">
+          {title}
+        </h3>
+        <div className="grid grid-cols-[minmax(0,3rem)_minmax(0,1fr)_minmax(0,1fr)] gap-2 border-b border-border bg-muted/70 px-3 py-3 text-sm font-bold uppercase text-muted-foreground">
+          <span>Day</span><span>Morning</span><span>Evening</span>
+        </div>
+        {rows.map((row, index) => (
+          <div key={row.day} className="grid grid-cols-[minmax(0,3rem)_minmax(0,1fr)_minmax(0,1fr)] items-start gap-2 border-b border-border/60 px-3 py-2 last:border-0">
+            <span className="pt-3 text-lg font-bold text-foreground">{row.day}</span>
+            {[morningField, eveningField].map((field) => {
+              const flagged = row[`${field}Flag`];
+              return (
+                <div key={field} className="min-w-0">
+                  <input
+                    inputMode="decimal"
+                    value={row[field]}
+                    placeholder=""
+                    aria-label={`Day ${row.day} ${field}`}
+                    aria-invalid={flagged}
+                    onChange={(event) => updateCell(index, field, event.target.value)}
+                    className={`w-full rounded-xl border-2 px-3 py-3 text-lg font-semibold text-foreground outline-none focus:border-primary ${flagged ? "border-warning bg-warning/10" : "border-border bg-background"}`}
+                  />
+                  {flagged && <span className="mt-1 block text-xs font-medium text-warning-foreground">Please check this value</span>}
+                </div>
+              );
+            })}
+          </div>
+        ))}
+      </div>
+    );
+  }
 
   return (
     <main className="min-h-screen bg-background pb-16">
@@ -210,8 +265,8 @@ function Home() {
               <p className="font-semibold text-foreground">How it reads your sheet</p>
               <ul className="mt-2 space-y-1">
                 <li>• Scan one page only — days 1–15 or days 16–30/31.</li>
-                <li>• Morning is taken from the 3rd column of the table.</li>
-                <li>• Evening is taken from the last column of the table.</li>
+                 <li>• Milk is read from columns 2 and 5.</li>
+                 <li>• Amount is read from columns 4 and 7.</li>
                 <li>• You check every value before the total is calculated.</li>
                 <li>• Nothing is saved — the scan is cleared when you finish.</li>
               </ul>
@@ -262,68 +317,19 @@ function Home() {
               />
             )}
 
-            <div className="overflow-hidden rounded-3xl border border-border bg-card">
-              <div className="grid grid-cols-[minmax(0,3rem)_minmax(0,1fr)_minmax(0,1fr)] gap-2 border-b border-border bg-muted/70 px-3 py-3 text-sm font-bold uppercase tracking-wide text-muted-foreground">
-                <span>Day</span>
-                <span>Morning</span>
-                <span>Evening</span>
-              </div>
-              {rows.map((row, index) => (
-                <div
-                  key={row.day}
-                  className="grid grid-cols-[minmax(0,3rem)_minmax(0,1fr)_minmax(0,1fr)] items-center gap-2 border-b border-border/60 px-3 py-2 last:border-0"
-                >
-                  <span className="text-lg font-bold text-foreground">{row.day}</span>
-                  {(["morning", "evening"] as const).map((field) => {
-                    const flagged = field === "morning" ? row.morningFlag : row.eveningFlag;
-                    return (
-                      <div key={field} className="min-w-0">
-                        <input
-                          inputMode="decimal"
-                          value={row[field]}
-                          placeholder={flagged ? "verify" : "—"}
-                          aria-label={`Day ${row.day} ${field} value`}
-                          onChange={(e) => {
-                            const v = e.target.value;
-                            setRows((prev) =>
-                              prev.map((r, i) =>
-                                i === index
-                                  ? {
-                                      ...r,
-                                      [field]: v,
-                                      ...(field === "morning"
-                                        ? { morningFlag: false }
-                                        : { eveningFlag: false }),
-                                    }
-                                  : r,
-                              ),
-                            );
-                          }}
-                          className={`w-full rounded-xl border-2 px-3 py-3 text-lg font-semibold text-foreground outline-none focus:border-primary ${
-                            flagged ? "border-warning bg-warning/10" : "border-border bg-background"
-                          }`}
-                        />
-                        {flagged && (
-                          <span className="mt-1 block text-xs font-medium text-warning-foreground">
-                            ✏️ Needs verification
-                          </span>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              ))}
-            </div>
+            <VerificationTable title="Milk values" morningField="morningMilk" eveningField="eveningMilk" />
+            <VerificationTable title="Amount values" morningField="morningAmount" eveningField="eveningAmount" />
 
             <p className="text-center text-sm text-muted-foreground">
               Rows detected: <span className="font-bold text-foreground">{rows.length}</span>
-              {pending.length > 0 && " · blank cells count as no entry"}
+              {pending.length > 0 && ` · ${pending.length} row${pending.length === 1 ? "" : "s"} need checking`}
             </p>
 
             <button
               type="button"
-              onClick={() => setStage("result")}
-              className="w-full rounded-3xl bg-primary px-6 py-6 text-xl font-bold text-primary-foreground shadow-lg shadow-primary/20 transition active:scale-[0.98]"
+              onClick={() => pending.length === 0 && setStage("result")}
+              disabled={pending.length > 0}
+              className="w-full rounded-3xl bg-primary px-6 py-6 text-xl font-bold text-primary-foreground shadow-lg shadow-primary/20 transition enabled:active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50"
             >
               ✓ Confirm &amp; Calculate
             </button>
@@ -340,12 +346,15 @@ function Home() {
         {stage === "result" && (
           <section className="space-y-4">
             <h2 className="text-center font-display text-2xl font-bold text-foreground">
-              Milk Calculation Result
+              Milk &amp; Amount Results
             </h2>
             <div className="space-y-3">
-              <ResultCard label="Morning Total" value={fmt(morningTotal)} />
-              <ResultCard label="Evening Total" value={fmt(eveningTotal)} />
-              <ResultCard label="Grand Total" value={fmt(morningTotal + eveningTotal)} highlight />
+              <ResultCard label="Morning Milk Total" value={fmt(totals.morningMilkTotal)} />
+              <ResultCard label="Evening Milk Total" value={fmt(totals.eveningMilkTotal)} />
+              <div className="my-2 border-t border-border" />
+              <ResultCard label="Morning Amount Total" value={fmt(totals.morningAmountTotal)} />
+              <ResultCard label="Evening Amount Total" value={fmt(totals.eveningAmountTotal)} />
+              <ResultCard label="Total Amount" value={fmt(totals.totalAmount)} highlight />
             </div>
             <p className="text-center text-base text-muted-foreground">
               Rows detected: <span className="font-bold text-foreground">{rows.length}</span>

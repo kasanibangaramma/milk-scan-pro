@@ -17,8 +17,10 @@ export type ScanCell = {
 
 export type ScanRow = {
   day: number;
-  morning: ScanCell;
-  evening: ScanCell;
+  morningMilk: ScanCell;
+  morningAmount: ScanCell;
+  eveningMilk: ScanCell;
+  eveningAmount: ScanCell;
 };
 
 export type ScanResult =
@@ -26,8 +28,10 @@ export type ScanResult =
       ok: true;
       rows: ScanRow[];
       columnCount: number;
-      morningColumnIndex: number;
-      eveningColumnIndex: number;
+      morningMilkColumnIndex: number;
+      morningAmountColumnIndex: number;
+      eveningMilkColumnIndex: number;
+      eveningAmountColumnIndex: number;
       warnings: string[];
     }
   | { ok: false; error: string; code: string };
@@ -41,15 +45,15 @@ const CellSchema = z.object({
 const ModelSchema = z.object({
   table_detected: z.boolean(),
   column_count: z.number().nullable().optional(),
-  morning_column_index: z.number().nullable().optional(),
-  evening_column_index: z.number().nullable().optional(),
   image_quality: z.enum(["good", "poor"]).nullable().optional(),
   rows: z
     .array(
       z.object({
         day: z.number().nullable().optional(),
-        morning: CellSchema.nullable().optional(),
-        evening: CellSchema.nullable().optional(),
+        morning_milk: CellSchema.nullable().optional(),
+        morning_amount: CellSchema.nullable().optional(),
+        evening_milk: CellSchema.nullable().optional(),
+        evening_amount: CellSchema.nullable().optional(),
       }),
     )
     .nullable()
@@ -58,32 +62,43 @@ const ModelSchema = z.object({
 
 const PROMPT = `You are a precise table-structure reader for a handwritten/printed monthly MILK RECORD sheet photo.
 
-STEP 1 — Detect the table: find its outer boundary, its data rows (one per day) and its columns (left to right). Report how many columns the table body has (count every column, including the day/date column).
+STEP 1 — Detect the table: find its outer boundary and data rows (one per day). The table body MUST have exactly 7 physical columns, counted left to right:
+1 = Day
+2 = Morning Milk
+3 = Morning Fat
+4 = Morning Amount
+5 = Evening Milk
+6 = Evening Fat
+7 = Evening Amount
 
-STEP 2 — Identify columns by PHYSICAL POSITION ONLY, never by reading order:
-- MORNING column = the 3rd column of the table, counting columns left to right starting at 1 (the day column is column 1).
-- EVENING column = the LAST (rightmost) column of the table body. If the rightmost column is a printed row-total column, still use the rightmost column, unless it is clearly a signature/remarks column, in which case use the rightmost column that holds milk quantities.
+STEP 2 — Identify values by PHYSICAL POSITION ONLY, never by reading order or semantic guessing:
+- Morning Milk is ONLY column 2.
+- Morning Amount is ONLY column 4.
+- Evening Milk is ONLY column 5.
+- Evening Amount is ONLY column 7.
+- Columns 3 and 6 are fat values. Never return them as milk or amount.
 
-STEP 3 — For every day row, read ONLY the cell that sits inside the morning column and ONLY the cell inside the evening column. Never take a value from a neighbouring column. Never use the day number as a value. Ignore headers, serial/member numbers, printed totals, subtotals and anything outside the table.
+STEP 3 — For every day row, read ONLY columns 2, 4, 5, and 7 into their matching fields. Never take a value from a neighbouring column. Never use day numbers, fat values, headers, printed totals, subtotals, or anything outside the table.
 
 STEP 4 — Output strict JSON only, no markdown:
 {
   "table_detected": boolean,
   "image_quality": "good" | "poor",
   "column_count": number,
-  "morning_column_index": number,
-  "evening_column_index": number,
   "rows": [
     { "day": number,
-      "morning": { "text": string, "value": number|null, "confidence": number },
-      "evening": { "text": string, "value": number|null, "confidence": number } }
+      "morning_milk": { "text": string, "value": number|null, "confidence": number },
+      "morning_amount": { "text": string, "value": number|null, "confidence": number },
+      "evening_milk": { "text": string, "value": number|null, "confidence": number },
+      "evening_amount": { "text": string, "value": number|null, "confidence": number } }
   ]
 }
 
 Rules:
 - Include one entry per visible day row only (e.g. days 1-15, or 16-30/31). Never invent rows.
-- "text" is exactly what is written in that cell ("" if blank). "value" is the numeric amount with correct decimals, or null if blank/unreadable.
+- "text" is exactly what is written in that cell ("" if blank). "value" is the numeric value with correct decimals, or null if blank/unreadable.
 - confidence is 0..1 and must be honest: use below 0.75 whenever the digit shape is ambiguous (0/8, 1/7, 5/6), the decimal point is unclear, digits are cut off, or the cell is blurry/blank.
+- Never guess an uncertain value. If confidence is below 0.75, return value null even if text contains a possible reading.
 - If the whole table cannot be located, or the photo is too blurry/incomplete to place columns, set table_detected false and rows [].`;
 
 export const scanMilkPage = createServerFn({ method: "POST" })
@@ -176,20 +191,11 @@ export const scanMilkPage = createServerFn({ method: "POST" })
       };
     }
     const columnCount = m.column_count ?? 0;
-    const morningIdx = m.morning_column_index ?? 0;
-    const eveningIdx = m.evening_column_index ?? 0;
-    if (columnCount < 3 || morningIdx !== 3) {
+    if (columnCount !== 7) {
       return {
         ok: false,
-        code: "no_morning_column",
-        error: "Could not identify the Morning column. Please retake the photo clearly.",
-      };
-    }
-    if (eveningIdx < 3 || eveningIdx > columnCount) {
-      return {
-        ok: false,
-        code: "no_evening_column",
-        error: "Could not identify the Evening column. Please retake the photo clearly.",
+        code: "wrong_column_count",
+        error: "Could not identify all 7 columns. Please retake the photo with the complete table visible.",
       };
     }
 
@@ -201,8 +207,9 @@ export const scanMilkPage = createServerFn({ method: "POST" })
       const raw = (cell?.text ?? "").trim();
       const confidence = cell?.confidence ?? 0;
       let value = typeof cell?.value === "number" && Number.isFinite(cell.value) ? cell.value : null;
-      if (value !== null && (value < 0 || value > 200)) value = null;
+      if (value !== null && value < 0) value = null;
       const needsVerification = value === null || confidence < 0.75;
+      if (needsVerification) value = null;
       return { value, confidence, needsVerification, raw };
     };
 
@@ -211,7 +218,13 @@ export const scanMilkPage = createServerFn({ method: "POST" })
       if (typeof day !== "number" || !Number.isInteger(day) || day < 1 || day > 31) continue;
       if (seenDays.has(day)) continue;
       seenDays.add(day);
-      rows.push({ day, morning: toCell(row.morning), evening: toCell(row.evening) });
+      rows.push({
+        day,
+        morningMilk: toCell(row.morning_milk),
+        morningAmount: toCell(row.morning_amount),
+        eveningMilk: toCell(row.evening_milk),
+        eveningAmount: toCell(row.evening_amount),
+      });
     }
 
     rows.sort((a, b) => a.day - b.day);
@@ -224,15 +237,28 @@ export const scanMilkPage = createServerFn({ method: "POST" })
     }
 
     const missingDays: number[] = [];
-    const firstDay = rows[0]!.day;
-    const lastDay = rows[rows.length - 1]!.day;
+    const firstRow = rows[0];
+    const lastRow = rows.at(-1);
+    if (!firstRow || !lastRow) {
+      return { ok: false, code: "no_rows", error: "Could not identify any day rows." };
+    }
+    const firstDay = firstRow.day;
+    const lastDay = lastRow.day;
     for (let d = firstDay; d <= lastDay; d++) {
       if (!seenDays.has(d)) missingDays.push(d);
     }
     if (missingDays.length > 0) {
       warnings.push(`Day ${missingDays.join(", ")} could not be found on this page. Please check the photo.`);
     }
-    if (rows.some((r) => r.morning.needsVerification || r.evening.needsVerification)) {
+    if (
+      rows.some(
+        (r) =>
+          r.morningMilk.needsVerification ||
+          r.eveningMilk.needsVerification ||
+          r.morningAmount.needsVerification ||
+          r.eveningAmount.needsVerification,
+      )
+    ) {
       warnings.push("Some values could not be read confidently. Please verify the highlighted values.");
     }
 
@@ -240,8 +266,10 @@ export const scanMilkPage = createServerFn({ method: "POST" })
       ok: true,
       rows,
       columnCount,
-      morningColumnIndex: morningIdx,
-      eveningColumnIndex: eveningIdx,
+      morningMilkColumnIndex: 2,
+      morningAmountColumnIndex: 4,
+      eveningMilkColumnIndex: 5,
+      eveningAmountColumnIndex: 7,
       warnings,
     };
   });
