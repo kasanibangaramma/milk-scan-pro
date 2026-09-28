@@ -319,7 +319,6 @@ function Home() {
               />
             )}
 
-            <VerificationTable title="Milk values" morningField="morningMilk" eveningField="eveningMilk" />
             <VerificationTable title="Amount values" morningField="morningAmount" eveningField="eveningAmount" />
 
             <p className="text-center text-sm text-muted-foreground">
