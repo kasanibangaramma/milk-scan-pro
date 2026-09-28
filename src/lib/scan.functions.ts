@@ -121,13 +121,13 @@ export const scanMilkPage = createServerFn({ method: "POST" })
             {
               role: "user",
               content: [
-                { type: "text", text: "Read this milk record page." },
+                { type: "text", text: "Read this milk record page. Read EVERY day row down to the very bottom of the table, including days 28, 29, 30 and 31 if present." },
                 { type: "image_url", image_url: { url: data.imageDataUrl } },
               ],
             },
           ],
           response_format: { type: "json_object" },
-          max_tokens: 8192,
+          max_tokens: 32000,
         }),
       });
     } catch {
