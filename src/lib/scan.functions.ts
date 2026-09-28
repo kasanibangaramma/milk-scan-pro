@@ -121,13 +121,13 @@ export const scanMilkPage = createServerFn({ method: "POST" })
             {
               role: "user",
               content: [
-                { type: "text", text: "Read this milk record page." },
+                { type: "text", text: "Read this milk record page. Read EVERY day row down to the very bottom of the table, including days 28, 29, 30 and 31 if present." },
                 { type: "image_url", image_url: { url: data.imageDataUrl } },
               ],
             },
           ],
           response_format: { type: "json_object" },
-          max_tokens: 8192,
+          max_tokens: 32000,
         }),
       });
     } catch {
@@ -229,6 +229,59 @@ export const scanMilkPage = createServerFn({ method: "POST" })
     }
 
     rows.sort((a, b) => a.day - b.day);
+
+    // Second focused pass: if this is a second-half page that seems to end before day 31,
+    // re-check the bottom of the table for any remaining day rows actually present.
+    const lastSeen = rows.at(-1)?.day ?? 0;
+    if (lastSeen >= 16 && lastSeen < 31) {
+      try {
+        const extra = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+          body: JSON.stringify({
+            model: "google/gemini-3.1-pro-preview",
+            messages: [
+              { role: "system", content: PROMPT },
+              {
+                role: "user",
+                content: [
+                  {
+                    type: "text",
+                    text: `Look ONLY at the bottom of the table. Return ONLY the day rows whose Day number is greater than ${lastSeen} (for example ${lastSeen + 1}${lastSeen + 1 < 31 ? `, ${lastSeen + 2}` : ""} ... up to 31) that are actually written on this page. If there are none, return an empty rows array. Use the same JSON format.`,
+                  },
+                  { type: "image_url", image_url: { url: data.imageDataUrl } },
+                ],
+              },
+            ],
+            response_format: { type: "json_object" },
+            max_tokens: 16000,
+          }),
+        });
+        if (extra.ok) {
+          const p = (await extra.json()) as { choices?: Array<{ message?: { content?: string } }> };
+          const c = p.choices?.[0]?.message?.content ?? "";
+          const ep = ModelSchema.safeParse(JSON.parse(c.replace(/^```json\s*|```$/g, "").trim()));
+          if (ep.success) {
+            for (const row of ep.data.rows ?? []) {
+              const day = row.day;
+              if (typeof day !== "number" || !Number.isInteger(day) || day <= lastSeen || day > 31) continue;
+              if (seenDays.has(day)) continue;
+              seenDays.add(day);
+              rows.push({
+                day,
+                morningMilk: toCell(row.morning_milk),
+                morningAmount: toCell(row.morning_amount),
+                eveningMilk: toCell(row.evening_milk),
+                eveningAmount: toCell(row.evening_amount),
+              });
+            }
+            rows.sort((a, b) => a.day - b.day);
+          }
+        }
+      } catch {
+        /* keep first-pass rows */
+      }
+    }
     if (rows.length === 0) {
       return {
         ok: false,
